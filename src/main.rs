@@ -1,12 +1,12 @@
-#![feature(slice_patterns)] 
+#![feature(slice_patterns)]
 extern crate nix;
 extern crate libc;
-use std::env;
-use libc::{pid_t,c_void};
+use std::{env, ptr,mem};
+use libc::{pid_t, c_void, waitpid};
 use nix::sys::ptrace;
-use nix::sys::ptrace::ptrace::{PTRACE_ATTACH,PTRACE_DETACH,PTRACE_GETREGS};
+use nix::sys::ptrace::ptrace::{PTRACE_ATTACH, PTRACE_DETACH, PTRACE_GETREGS};
 
-#[cfg(target_arch = "x86_64")]
+// #[cfg(target_arch = "x86_64")]
 #[derive(Debug,Default)]
 #[repr(C)]
 struct user_regs_struct {
@@ -40,21 +40,29 @@ struct user_regs_struct {
 }
 
 
-fn infect(pid: pid_t) -> Result<(),()> {
-    ptrace::ptrace(PTRACE_ATTACH,pid,0 as *mut c_void ,0 as *mut c_void);
-    let mut regs: user_regs_struct = user_regs_struct::default();
-    ptrace::ptrace(PTRACE_GETREGS,pid,&mut regs as *mut user_regs_struct as *mut c_void,&mut regs as *mut user_regs_struct as *mut c_void);
-    println!("{:?}",regs);
-    ptrace::ptrace(PTRACE_DETACH,pid,0 as *mut c_void ,0 as *mut c_void);
-    unimplemented!()
+fn infect(pid: pid_t) -> Result<(), ()> {
+    ptrace::ptrace(PTRACE_ATTACH, pid, 0 as *mut c_void, 0 as *mut c_void);
+    let mut regs: user_regs_struct;
+    unsafe {
+        waitpid(pid, 0 as *mut i32, 0);
+        regs = mem::uninitialized();
+    }
+    
+    ptrace::ptrace(PTRACE_GETREGS,
+                   pid,
+                   &mut regs as *mut user_regs_struct as *mut c_void,
+                   &mut regs as *mut user_regs_struct as *mut c_void);
+    println!("{:?}", regs);
+    ptrace::ptrace(PTRACE_DETACH, pid, 0 as *mut c_void, 0 as *mut c_void);
+    Ok(())
 }
 fn main() {
-     let args: Vec<String> = env::args().collect();
+    let args: Vec<String> = env::args().collect();
 
-     match &args[1..] {
-         &[ref pid, ref code] => {
-            infect(2138);
-             },
-         _ => unimplemented!(),
-     }
+    match &args[1..] {
+        &[ref pid, ref code] => {
+            infect(pid.parse::<i32>().unwrap());
+        }
+        _ => unimplemented!(),
+    }
 }
