@@ -1,13 +1,14 @@
 #![feature(slice_patterns)]
 extern crate nix;
 extern crate libc;
-use std::{env, ptr,mem};
+use std::{env, ptr, mem, fmt};
 use libc::{pid_t, c_void, waitpid};
 use nix::sys::ptrace;
-use nix::sys::ptrace::ptrace::{PTRACE_ATTACH, PTRACE_DETACH, PTRACE_GETREGS};
+use nix::sys::ptrace::ptrace::{PTRACE_ATTACH, PTRACE_DETACH, PTRACE_GETREGS, PTRACE_POKETEXT,
+                               PTRACE_SETREGS};
 
 // #[cfg(target_arch = "x86_64")]
-#[derive(Debug,Default)]
+#[derive(Debug, Default)]
 #[repr(C)]
 struct user_regs_struct {
     r15: u64,
@@ -40,28 +41,60 @@ struct user_regs_struct {
 }
 
 
-fn infect(pid: pid_t) -> Result<(), ()> {
-    ptrace::ptrace(PTRACE_ATTACH, pid, 0 as *mut c_void, 0 as *mut c_void);
+fn infect(pid: pid_t, buffer: &[u8]) -> Result<(), ()> {
+    assert_eq!(ptrace::ptrace(PTRACE_ATTACH, pid, 0 as *mut c_void, 0 as *mut c_void).unwrap(),0);
     let mut regs: user_regs_struct;
     unsafe {
         waitpid(pid, 0 as *mut i32, 0);
         regs = mem::uninitialized();
     }
-    
-    ptrace::ptrace(PTRACE_GETREGS,
+
+    assert_eq!(ptrace::ptrace(PTRACE_GETREGS,
                    pid,
                    &mut regs as *mut user_regs_struct as *mut c_void,
-                   &mut regs as *mut user_regs_struct as *mut c_void);
+                   &mut regs as *mut user_regs_struct as *mut c_void).unwrap(),0);
     println!("{:?}", regs);
+
+    regs.rsp -= 4; // decrement rsp
+    println!("New rsp {:x}", regs.rsp);
+
+    assert_eq!(ptrace::ptrace(PTRACE_POKETEXT,
+                              pid,
+                              regs.rsp as *mut libc::c_void,
+                              regs.rip as *mut libc::c_void).unwrap(),
+               0);// poke rip -> rsp
+
+    let ptr = regs.rsp - 1024; // inject rsp - 1024
+    let beginning = ptr;
+
+    println!("injecting into: {:x}", beginning);
+
+    regs.rip = beginning + 2; // set rip as value of rsp - 1024
+    println!("rip is at: {:x}", regs.rip);
+
+    ptrace::ptrace(PTRACE_SETREGS,
+                   pid,
+                   regs.rsp as *mut libc::c_void,
+                   regs.rip as *mut libc::c_void);
+
+    for byte in buffer {
+        ptrace::ptrace(PTRACE_POKETEXT,
+                       pid,
+                       regs.rsp as *mut libc::c_void,
+                       regs.rip as *mut libc::c_void);
+    }
+
+
     ptrace::ptrace(PTRACE_DETACH, pid, 0 as *mut c_void, 0 as *mut c_void);
     Ok(())
 }
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
     match &args[1..] {
         &[ref pid, ref code] => {
-            infect(pid.parse::<i32>().unwrap());
+            infect(pid.parse::<i32>().unwrap(), &[]);
         }
         _ => unimplemented!(),
     }
