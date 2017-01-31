@@ -42,7 +42,8 @@ struct user_regs_struct {
 
 
 fn infect(pid: pid_t, buffer: &[u8]) -> Result<(), ()> {
-    assert_eq!(ptrace::ptrace(PTRACE_ATTACH, pid, 0 as *mut c_void, 0 as *mut c_void).unwrap(),0);
+    assert_eq!(ptrace::ptrace(PTRACE_ATTACH, pid, 0 as *mut c_void, 0 as *mut c_void).unwrap(),
+               0);
     let mut regs: user_regs_struct;
     unsafe {
         waitpid(pid, 0 as *mut i32, 0);
@@ -50,18 +51,23 @@ fn infect(pid: pid_t, buffer: &[u8]) -> Result<(), ()> {
     }
 
     assert_eq!(ptrace::ptrace(PTRACE_GETREGS,
-                   pid,
-                   &mut regs as *mut user_regs_struct as *mut c_void,
-                   &mut regs as *mut user_regs_struct as *mut c_void).unwrap(),0);
+                              pid,
+                              &mut regs as *mut user_regs_struct as *mut c_void,
+                              &mut regs as *mut user_regs_struct as *mut c_void)
+                   .unwrap(),
+               0);
     println!("{:?}", regs);
 
-    regs.rsp -= 4; // decrement rsp
-    println!("New rsp {:x}", regs.rsp);
+
+    
+    regs.rsp -= 8; // decrement rsp
+    println!("New rsp: {:x}", regs.rsp);
 
     assert_eq!(ptrace::ptrace(PTRACE_POKETEXT,
                               pid,
                               regs.rsp as *mut libc::c_void,
-                              regs.rip as *mut libc::c_void).unwrap(),
+                              regs.rip as *mut libc::c_void)
+                   .unwrap(),
                0);// poke rip -> rsp
 
     let ptr = regs.rsp - 1024; // inject rsp - 1024
@@ -72,20 +78,22 @@ fn infect(pid: pid_t, buffer: &[u8]) -> Result<(), ()> {
     regs.rip = beginning + 2; // set rip as value of rsp - 1024
     println!("rip is at: {:x}", regs.rip);
 
-    ptrace::ptrace(PTRACE_SETREGS,
-                   pid,
-                   regs.rsp as *mut libc::c_void,
-                   regs.rip as *mut libc::c_void);
-
+    assert_eq!(ptrace::ptrace(PTRACE_SETREGS,
+                              pid,
+                              &mut regs as *mut user_regs_struct as *mut c_void,
+                              &mut regs as *mut user_regs_struct as *mut c_void)
+                   .unwrap(),
+               0);
     for byte in buffer {
-        ptrace::ptrace(PTRACE_POKETEXT,
-                       pid,
-                       regs.rsp as *mut libc::c_void,
-                       regs.rip as *mut libc::c_void);
+        // ptrace::ptrace(PTRACE_POKETEXT,
+        //                pid,
+        //                regs.rsp as *mut libc::c_void,
+        //                regs.rip as *mut libc::c_void);
     }
 
 
-    ptrace::ptrace(PTRACE_DETACH, pid, 0 as *mut c_void, 0 as *mut c_void);
+    assert_eq!(ptrace::ptrace(PTRACE_DETACH, pid, 0 as *mut c_void, 0 as *mut c_void).unwrap(),
+               0);
     Ok(())
 }
 
